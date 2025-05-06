@@ -5,7 +5,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import os
 # Import the main google.genai module for the new SDK
-from google import genai
+from google.genai import genai
 
 # --- Configuration Constants ---
 # Define salary ranges and their recommended savings targets
