@@ -18,8 +18,8 @@ SALARY_RANGES = {
     "50000+": {"min": 50000, "max": float('inf'), "savings_target": 0.35}
 }
 
-# Default Budget Categories and their initial budget amounts (can be customized later if needed)
-BUDGET_CATEGORIES = {
+# Initial Default Budget Categories and amounts (these will be stored in session state)
+DEFAULT_BUDGET_CATEGORIES = {
     "Groceries": 5000,
     "Utilities": 3000,
     "Rent/Mortgage": 15000,
@@ -67,6 +67,7 @@ def calculate_budget_metrics(df, budget_categories):
     """
     Calculate budget-related metrics for the current month.
     Compares actual spending against predefined budget amounts per category.
+    Takes budget_categories as an argument (now from session state).
     """
     # Handle case with no data gracefully
     if df.empty:
@@ -271,10 +272,10 @@ def create_income_vs_expense_trend_chart(df, monthly_salary):
     return fig
 
 
-def get_ai_financial_insights(monthly_salary, monthly_tax, budget_metrics, all_expenses_df):
+def get_ai_financial_insights(monthly_salary, monthly_tax, budget_metrics, all_expenses_df, user_budget_categories):
     """
     Generate personalized financial insights and recommendations using the Gemini API.
-    Analyzes current month's budget performance and overall spending trends, considering tax.
+    Analyzes current month's budget performance and overall spending trends, considering tax and user-defined budget.
     """
     try:
         # Configure Gemini API key from Streamlit secrets
@@ -289,10 +290,10 @@ def get_ai_financial_insights(monthly_salary, monthly_tax, budget_metrics, all_e
         total_spent_month = budget_metrics['total_spent']
         post_tax_income = monthly_salary - monthly_tax # Calculate post-tax income
 
-        # Detail current month's budget vs. actual spending
-        category_budget_vs_actual = "Current Month Budget Performance:\n"
+        # Detail current month's budget vs. actual spending (using user-defined budget)
+        category_budget_vs_actual = "Current Month Budget Performance (based on your set budget):\n"
         for category, data in budget_metrics['category_metrics'].items():
-             category_budget_vs_actual += f"- {category}: Budget ₹{data['budget']:.2f}, Spent ₹{data['spent']:.2f}, Remaining ₹{data['remaining']:.2f}\n"
+             category_budget_vs_actual += f"- {category}: Your Budget ₹{user_budget_categories.get(category, 0):,.2f}, Spent ₹{data['spent']:.2f}, Remaining ₹{data['remaining']:.2f}\n" # Use user budget
 
         # Summarize overall spending patterns from all time data
         all_time_category_spending = all_expenses_df.groupby('Category')['Amount'].sum().sort_values(ascending=False)
@@ -306,7 +307,7 @@ def get_ai_financial_insights(monthly_salary, monthly_tax, budget_metrics, all_e
         # --- Craft the AI Prompt ---
         prompt = f"""Analyze the following personal finance data for a user in India.
         Provide personalized financial insights, actionable tips, and highlight areas for improvement in a concise manner using bullet points.
-        Focus on the current month's performance compared to the budget and overall spending trends. Use Indian Rupees (₹) for currency.
+        Focus on the current month's performance compared to the **user-defined budget** and overall spending trends. Use Indian Rupees (₹) for currency.
 
         User's Monthly Gross Income: ₹{monthly_salary:,.2f}
         Estimated Monthly Tax: ₹{monthly_tax:,.2f}
@@ -316,18 +317,17 @@ def get_ai_financial_insights(monthly_salary, monthly_tax, budget_metrics, all_e
         {all_time_spending_summary}
 
         Based on this data, provide suggestions focusing on:
-        1. Analysis of spending relative to **post-tax income**.
-        2. Identification of high spending categories relative to budget or overall spending.
-        3. Tips to reduce spending in identified areas.
-        4. General recommendations for improving savings and financial health, considering the tax burden.
-        5. Positive feedback where performance is good (e.g., staying within budget in certain categories).
+        1. Analysis of spending relative to **post-tax income** and **user-defined budget**.
+        2. Identification of high spending categories relative to user-defined budget or overall spending.
+        3. Tips to reduce spending in identified areas, considering the user's budget.
+        4. General recommendations for improving savings and financial health, considering the tax burden and user's budget goals.
+        5. Positive feedback where performance is good (e.g., staying within the user-defined budget in certain categories).
         6. Suggestions tailored to the income range and estimated tax impact.
 
         Keep the response encouraging, easy to understand, and formatted with bullet points. Start directly with the insights.
         """
 
         # --- Generate Content using the AI Model ---
-        # Call generate_content directly on client.models
         response = client.models.generate_content(model='gemini-2.0-flash', contents=prompt)
 
         # Return the text response from the AI
@@ -359,6 +359,11 @@ if 'salary_range' not in st.session_state:
 if 'monthly_salary' not in st.session_state:
     # Default salary based on the initial salary range selection
     st.session_state.monthly_salary = float(SALARY_RANGES[st.session_state.salary_range]["min"])
+
+# Initialize or load user-defined budget categories into session state
+if 'user_budget_categories' not in st.session_state:
+    st.session_state.user_budget_categories = DEFAULT_BUDGET_CATEGORIES.copy() # Copy default budgets initially
+
 
 # --- Main App Title and Description ---
 st.title("💰 Personal Finance Tracker")
@@ -404,8 +409,29 @@ with st.sidebar:
     st.write("Estimated tax is calculated using a simplified New Tax Regime.")
     # Could add options for Old Regime, deductions etc. here in the future
 
+    # --- Customizable Budget Settings ---
+    st.subheader("📝 Set Your Monthly Budget")
+    st.write("Customize your budget for each spending category.")
 
-   
+    # Use a form for budget inputs to update them together
+    with st.form("budget_form"):
+        updated_budgets = {}
+        for category, default_budget in DEFAULT_BUDGET_CATEGORIES.items():
+            current_budget = st.session_state.user_budget_categories.get(category, default_budget) # Get current budget or default
+            updated_budgets[category] = st.number_input(
+                f"Budget for {category}",
+                min_value=0.0,
+                step=100.0,
+                format="%.2f",
+                value=float(current_budget),
+                key=f"budget_{category}" # Unique key for each input
+            )
+
+        budget_submitted = st.form_submit_button("Update Budgets")
+        if budget_submitted:
+            st.session_state.user_budget_categories = updated_budgets
+            st.success("✅ Budgets updated successfully!")
+
 
 # --- Expense Input Form ---
 st.subheader("📝 Add New Expense")
@@ -417,7 +443,8 @@ with st.form("expense_form", clear_on_submit=True):
     with cols[0]:
         date = st.date_input("Date", value=datetime.now(), key="exp_date")
     with cols[1]:
-        category = st.selectbox("Category", options=list(BUDGET_CATEGORIES.keys()), key="exp_category")
+        # Use the keys from the user's budget categories for the selectbox options
+        category = st.selectbox("Category", options=list(st.session_state.user_budget_categories.keys()), key="exp_category")
     with cols[2]:
         amount = st.number_input("Amount", min_value=0.01, step=0.01, format="%.2f", key="exp_amount")
     with cols[3]:
@@ -450,8 +477,8 @@ else:
     # Ensure 'Date' column is always datetime for consistent processing
     st.session_state.expenses_df['Date'] = pd.to_datetime(st.session_state.expenses_df['Date'])
 
-    # Calculate budget metrics for the current month
-    budget_metrics = calculate_budget_metrics(st.session_state.expenses_df, BUDGET_CATEGORIES)
+    # Calculate budget metrics for the current month using user-defined budgets
+    budget_metrics = calculate_budget_metrics(st.session_state.expenses_df, st.session_state.user_budget_categories)
 
     # Calculate estimated tax
     annual_income = st.session_state.monthly_salary * 12
@@ -482,6 +509,7 @@ else:
 
     # --- Budget vs. Actual Chart ---
     st.subheader("📈 Budget Performance (Current Month)")
+    # Pass budget_metrics which now uses user-defined budgets
     budget_chart = create_budget_vs_actual_chart(budget_metrics)
     st.plotly_chart(budget_chart, use_container_width=True) # Use container width for responsiveness
 
@@ -531,7 +559,8 @@ else:
                 st.session_state.monthly_salary,
                 estimated_monthly_tax, # Pass estimated monthly tax to AI
                 budget_metrics,
-                st.session_state.expenses_df # Pass the full DataFrame for broader context
+                st.session_state.expenses_df, # Pass the full DataFrame for broader context
+                st.session_state.user_budget_categories # Pass user's budget categories to AI
             )
             # Display the AI-generated insights (using markdown for formatting)
             st.markdown(ai_insights)
