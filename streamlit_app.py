@@ -81,7 +81,7 @@ def calculate_budget_metrics(df, budget_categories):
                 'budget': budget,
                 'spent': 0,
                 'remaining': budget,
-                'percentage': 0
+                'percentage': (0 if budget == 0 else -spent/budget*100) # Handle 0 budget, show negative percentage if overspent
              }
         return metrics
 
@@ -107,7 +107,8 @@ def calculate_budget_metrics(df, budget_categories):
             'budget': budget,
             'spent': spent,
             'remaining': budget - spent,
-            'percentage': (spent / budget * 100) if budget > 0 else 0 # Avoid division by zero
+            # Calculate percentage relative to budget, handle overspending
+            'percentage': (spent / budget * 100) if budget > 0 else (100 if spent > 0 else 0) # Handle 0 budget, show 100% if spent
         }
 
     return metrics
@@ -409,28 +410,45 @@ with st.sidebar:
     st.write("Estimated tax is calculated using a simplified New Tax Regime.")
     # Could add options for Old Regime, deductions etc. here in the future
 
-    # --- Customizable Budget Settings ---
+    # --- Customizable Budget Settings (Streamlined) ---
     st.subheader("📝 Set Your Monthly Budget")
-    st.write("Customize your budget for each spending category.")
+    st.write("Select a category and set its monthly budget.")
 
-    # Use a form for budget inputs to update them together
-    with st.form("budget_form"):
-        updated_budgets = {}
-        for category, default_budget in DEFAULT_BUDGET_CATEGORIES.items():
-            current_budget = st.session_state.user_budget_categories.get(category, default_budget) # Get current budget or default
-            updated_budgets[category] = st.number_input(
-                f"Budget for {category}",
-                min_value=0.0,
-                step=100.0,
-                format="%.2f",
-                value=float(current_budget),
-                key=f"budget_{category}" # Unique key for each input
-            )
+    # Use a form for budget input to update a single category at a time
+    with st.form("single_budget_form"):
+        # Dropdown to select the category to budget for
+        selected_budget_category = st.selectbox(
+            "Select Category",
+            options=list(st.session_state.user_budget_categories.keys()),
+            key="selected_budget_category"
+        )
 
-        budget_submitted = st.form_submit_button("Update Budgets")
-        if budget_submitted:
-            st.session_state.user_budget_categories = updated_budgets
-            st.success("✅ Budgets updated successfully!")
+        # Get the current budget for the selected category to pre-fill the input
+        current_budget_amount = st.session_state.user_budget_categories.get(selected_budget_category, 0.0)
+
+        # Number input for the budget amount
+        new_budget_amount = st.number_input(
+            f"Set Budget for {selected_budget_category}",
+            min_value=0.0,
+            step=100.0,
+            format="%.2f",
+            value=float(current_budget_amount), # Pre-fill with current budget
+            key="new_budget_amount"
+        )
+
+        # Button to update the budget for the selected category
+        update_budget_button = st.form_submit_button("Update Budget")
+
+        # Logic to update the budget when the button is clicked
+        if update_budget_button:
+            st.session_state.user_budget_categories[selected_budget_category] = new_budget_amount
+            st.success(f"✅ Budget for {selected_budget_category} updated to ₹{new_budget_amount:,.2f}!")
+
+    # Display current budgets for reference
+    st.markdown("---") # Separator
+    st.write("**Current Monthly Budgets:**")
+    for category, budget in st.session_state.user_budget_categories.items():
+         st.write(f"- **{category}**: ₹{budget:,.2f}")
 
 
 # --- Expense Input Form ---
